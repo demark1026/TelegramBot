@@ -405,7 +405,7 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
     job.phase = "Getting stream info"
     job.grand = grand
     files, finished = {}, set()
-    opts = {
+opts = {
         "format": fmt,
         "outtmpl": str(outdir / "%(id).80B.%(ext)s"),
         "noplaylist": True,
