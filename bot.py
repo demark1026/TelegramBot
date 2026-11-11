@@ -338,6 +338,11 @@ def extract(url: str) -> dict:
         "noplaylist": True,
         "socket_timeout": 30,
         "retries": 3,
+                 "extractor_args": {
+            "youtube": {
+                "player-client": ["web_embedded", "web", "tv"]
+            }
+        }
     }
     last = None
     for _ in range(2):
