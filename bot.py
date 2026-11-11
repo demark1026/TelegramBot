@@ -405,7 +405,21 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
     job.phase = "Getting stream info"
     job.grand = grand
     files, finished = {}, set()
-
+    opts = {
+        "format": fmt,
+        "outtmpl": str(outdir / "%(id).80B.%(ext)s"),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "ffmpeg_location": "/usr/bin/ffmpeg",  # Fixes the MP3 conversion missing binary error
+        "extractor_args": {
+            "youtube": {
+                "player-client": ["web_embedded", "web", "tv"]
+            }
+        },
+        # ... keep the rest of your existing options below this
+    }
+    
     def hook(d):
         name = d.get("filename") or ""
         if d["status"] == "downloading":
