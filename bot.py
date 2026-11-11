@@ -322,9 +322,19 @@ def video_tiers(formats):
     return tiers[:3]
 
 
-# ───────────────────────── yt-dlp work ─────────────────────────
-def extract(url: str) -> dict:
-    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30, "retries": 3}
+# ───────────────────────── yt-dlp work ─────────────────────────def extract(url: str) -> dict:
+    opts = {
+        "quiet": True, 
+        "no_warnings": True, 
+        "noplaylist": True, 
+        "socket_timeout": 30, 
+        "retries": 3,
+        "extractor_args": {
+            "youtube": {
+                "player-client": ["web_embedded", "web", "tv"]
+            }
+        }
+    }
     last = None
     for _ in range(2):
         try:
@@ -333,6 +343,7 @@ def extract(url: str) -> dict:
         except Exception as e:
             last = e
     raise last
+
 
 
 def probe(path: Path) -> dict:
