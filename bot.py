@@ -1,14 +1,14 @@
 """
 Universal Video/Audio Downloader - Telegram bot.
 
-Setup:
+Needs on the machine that runs it:
     pip install -U "python-telegram-bot>=21" "yt-dlp[default]" python-dotenv
-    sudo apt install ffmpeg        (ffprobe comes with it)
-    .env file next to this script:  BOT_TOKEN=your-token
-    python3 bot.py
+    ffmpeg (includes ffprobe)  - required for MP3 and for merging video+audio
+    deno                       - required by YouTube
+BOT_TOKEN must be set as an environment variable (or in a .env file).
 
-Optional .env values:
-    CHANNEL=@coreviewz       channel users must join
+Optional environment values:
+    CHANNEL=@coreviewz     channel users must join
     REQUIRE_SUB=1          set 0 to disable the join requirement
     MAX_UPLOAD_MB=50       raise to 2000 only if you run a local Bot API server
 """
@@ -61,7 +61,7 @@ NSFW_WORDS = [
 NSFW_RE = re.compile(r"\b(" + "|".join(NSFW_WORDS) + r")\b", re.I)
 
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-MOONS = "🌑🌒🌓🌕🌖🌗🌘"
+MOONS = "🌑🌒🌓🌔🌕🌖🌗🌘"
 VIDEO_EXT = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".flv", ".3gp", ".avi", ".ts"}
 KEEP = ("format_id", "ext", "vcodec", "acodec", "height", "width", "fps",
         "tbr", "abr", "filesize", "filesize_approx")
@@ -74,6 +74,13 @@ def is_nsfw(*parts: str) -> bool:
 
 def esc(s) -> str:
     return html.escape(str(s or ""))
+
+
+def short_err(e, n=160) -> str:
+    """One clean line of an error message, safe to show in chat."""
+    t = re.sub(r"\x1b\[[0-9;]*m", "", str(e))
+    t = t.replace("ERROR:", "").strip().splitlines()[0] if t.strip() else "unknown error"
+    return t[:n]
 
 
 def fmt_dur(s):
@@ -208,7 +215,7 @@ async def spin_until(msg, label, stop: asyncio.Event):
         )
         i += 1
         try:
-            await asyncio.wait_for(stop.wait(), 1.2)
+            await asyncio.wait_for(stop.wait(), 2.0)
         except asyncio.TimeoutError:
             pass
 
@@ -238,7 +245,7 @@ async def is_subscribed(bot, user_id: int) -> bool:
             ChatMemberStatus.OWNER,
         )
     except TelegramError as e:
-        log.warning("Subscription check failed: %s", e)
+        log.warning("Subscription check failed (is the bot admin in %s?): %s", CHANNEL, e)
         return False
 
 
@@ -322,18 +329,15 @@ def video_tiers(formats):
     return tiers[:3]
 
 
-# ───────────────────────── yt-dlp work ─────────────────────────def extract(url: str) -> dict:
+# ───────────────────────── yt-dlp work ─────────────────────────
+def extract(url: str) -> dict:
     opts = {
-        "quiet": True, 
-        "no_warnings": True, 
-        "noplaylist": True, 
-        "socket_timeout": 30, 
+        "quiet": True,
+        "no_warnings": True,
+        "no_color": True,
+        "noplaylist": True,
+        "socket_timeout": 30,
         "retries": 3,
-        "extractor_args": {
-            "youtube": {
-                "player-client": ["web_embedded", "web", "tv"]
-            }
-        }
     }
     last = None
     for _ in range(2):
@@ -341,9 +345,9 @@ def video_tiers(formats):
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
         except Exception as e:
+            log.warning("extract failed: %s", e)
             last = e
     raise last
-
 
 
 def probe(path: Path) -> dict:
@@ -365,7 +369,7 @@ def probe(path: Path) -> dict:
         }
     except Exception as e:
         log.warning("ffprobe failed: %s", e)
-        return {"has_video": True, "width": None, "height": None, "duration": None}
+        return {"has_video": True, "width": None, "height": None, "duration": None, "vcodec": None}
 
 
 class NoVideo(Exception):
@@ -436,6 +440,7 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "no_color": True,
         "noprogress": True,
         "overwrites": True,
         "restrictfilenames": True,
@@ -457,6 +462,9 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
+    chosen = [(f.get("format_id"), f.get("vcodec"), f.get("acodec"), f.get("height"))
+              for f in (info.get("requested_formats") or [info])]
+    log.info("downloaded with %r -> %s", fmt, chosen)
     return final_path(info, outdir, key), info
 
 
@@ -481,6 +489,7 @@ def run_download(url, key, plan, job: Job, outdir: Path, mp3_q: str):
                     raise NoVideo("The downloaded file has no video stream.")
             return path, info, meta
         except Exception as e:
+            log.warning("attempt %r failed: %s", fmt, e)
             last = e
     raise last
 
@@ -517,15 +526,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await update.message.reply_text("🔎 <b>Scanning link…</b>", parse_mode=HTML)
     stop = asyncio.Event()
     spin = asyncio.create_task(spin_until(status, "Scanning link", stop))
+    info, err = None, ""
     try:
         info = await asyncio.to_thread(extract, url)
     except Exception as e:
-        info = None
+        err = short_err(e)
     finally:
         stop.set()
         await spin
     if info is None:
-        await safe_edit(status, "❌ <b>Couldn't read that link.</b>")
+        await safe_edit(status, f"❌ <b>Couldn't read that link.</b>\n<code>{esc(err)}</code>")
         return
 
     title = info.get("title") or "Untitled"
@@ -633,6 +643,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await ack(q, "Already working on it…")
         return
 
+    # MP3 and video+audio merging both need ffmpeg: say so clearly instead of failing silently
+    if not shutil.which("ffmpeg"):
+        await ack(q, "The server is missing ffmpeg, so this can't work yet. Ask the bot owner to install it.", True)
+        return
+
     key = parts[2]
     limit_mb = MAX_UPLOAD // 1048576
     plan, mp3_q = [], "320"
@@ -659,28 +674,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         est = est_size(plan)
         if est and est > MAX_UPLOAD:
-            await ack(q, f"Over {limit_mb} MB limit.", True)
+            await ack(q, f"About {est / 1048576:.0f} MB, over the {limit_mb} MB limit.", True)
             return
 
     entry["busy"] = True
     await ack(q, "⏳ Starting download…")
 
-    # Remove buttons immediately
     msg = q.message
-    try:
-        if msg.photo:
-            await msg.edit_caption(caption="⏳ <b>Preparing download...</b>", parse_mode=HTML, reply_markup=None)
-        else:
-            await msg.edit_text("⏳ <b>Preparing download...</b>", parse_mode=HTML, reply_markup=None)
-    except TelegramError:
-        pass
-
     title = entry["title"]
     job = Job()
     outdir = DOWNLOAD_DIR / f"{uid}_{key}"
-    error = None
-
+    error, detail = None, ""
     action_type = ChatAction.UPLOAD_VOICE if key == "mp3" else ChatAction.UPLOAD_VIDEO
+    log.info("plan for %s: %s", key,
+             [(f.get("format_id"), f.get("vcodec"), f.get("acodec"), f.get("height")) for f in plan])
+
     try:
         anim = asyncio.create_task(animate(context.bot, msg, job, title, action_type))
         async with SEM:
@@ -727,10 +735,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 error = "big"
             except NoVideo:
                 error = "novideo"
-            except yt_dlp.utils.DownloadError:
-                error = "dl"
-            except Exception:
-                error = "other"
+            except yt_dlp.utils.DownloadError as e:
+                log.warning("download failed: %s", e)
+                error, detail = "dl", short_err(e)
+            except Exception as e:
+                log.exception("job failed")
+                error, detail = "other", short_err(e)
             finally:
                 job.done = True
                 await anim
@@ -747,12 +757,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     notes = {
-        "big": f"⚠️ Over {limit_mb} MB limit.",
-        "novideo": "⚠️ No video stream came through.",
+        "big": f"⚠️ Over the {limit_mb} MB limit. Try a lower quality or MP3.",
+        "novideo": "⚠️ No video stream came through. Try another quality or MP3.",
         "dl": "❌ Download failed.",
         "other": "❌ Something went wrong.",
     }
-    await safe_edit(msg, panel_text(entry, notes[error]), panel_markup(entry, uid))
+    note = notes[error]
+    if detail:
+        note += f"\n<code>{esc(detail)}</code>"
+    await safe_edit(msg, panel_text(entry, note), panel_markup(entry, uid))
 
 
 async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
@@ -762,6 +775,12 @@ async def on_error(update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
     DOWNLOAD_DIR.mkdir(exist_ok=True)
+    if not shutil.which("ffmpeg"):
+        log.error("ffmpeg NOT found: MP3 and video+audio merging will fail.")
+    if not shutil.which("ffprobe"):
+        log.warning("ffprobe not found: files will not be verified before sending.")
+    if not (shutil.which("deno") or shutil.which("node")):
+        log.warning("No JavaScript runtime (deno) found: YouTube will likely fail.")
     app = (
         ApplicationBuilder()
         .token(TOKEN)
