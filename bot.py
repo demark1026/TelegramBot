@@ -351,8 +351,6 @@ def extract(url: str) -> dict:
             }
         }
     }
-        if COOKIE_FILE:
-        opts["cookiefile"] = COOKIE_FILE
     last = None
     for _ in range(2):
         try:
