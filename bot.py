@@ -478,8 +478,6 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
         "progress_hooks": [hook],
         "postprocessor_hooks": [pp_hook],
     }
-        if COOKIE_FILE:
-        opts["cookiefile"] = COOKIE_FILE
     if key == "mp3":
         opts["postprocessors"] = [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": mp3_q},
