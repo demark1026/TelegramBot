@@ -49,6 +49,13 @@ CHANNEL = os.getenv("CHANNEL", "@coreviewz")
 REQUIRE_SUB = os.getenv("REQUIRE_SUB", "1") == "1"
 MAX_UPLOAD = int(os.getenv("MAX_UPLOAD_MB", "50")) * 1024 * 1024
 BRAND = "Universal Video/Audio Downloader"
+# Optional YouTube login cookies (base64 of a Netscape cookies.txt)
+COOKIE_FILE = None
+_b64 = os.getenv("YT_COOKIES_B64", "").strip()
+if _b64:
+    import base64
+    COOKIE_FILE = "/tmp/yt_cookies.txt"
+    Path(COOKIE_FILE).write_bytes(base64.b64decode(_b64))
 DOWNLOAD_DIR = Path("downloads")
 SEM = asyncio.Semaphore(3)  # max simultaneous downloads
 URL_RE = re.compile(r"https?://\S+")
@@ -344,6 +351,8 @@ def extract(url: str) -> dict:
             }
         }
     }
+        if COOKIE_FILE:
+        opts["cookiefile"] = COOKIE_FILE
     last = None
     for _ in range(2):
         try:
@@ -471,6 +480,8 @@ def download_once(url, fmt, key, plan, job: Job, outdir: Path, mp3_q: str):
         "progress_hooks": [hook],
         "postprocessor_hooks": [pp_hook],
     }
+        if COOKIE_FILE:
+        opts["cookiefile"] = COOKIE_FILE
     if key == "mp3":
         opts["postprocessors"] = [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": mp3_q},
