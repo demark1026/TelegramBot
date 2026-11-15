@@ -1,17 +1,3 @@
-"""
-Universal Video/Audio Downloader - Telegram bot.
-
-Needs on the machine that runs it:
-    pip install -U "python-telegram-bot>=21" "yt-dlp[default]" python-dotenv
-    ffmpeg (includes ffprobe)  - required for MP3 and for merging video+audio
-    deno                       - required by YouTube
-BOT_TOKEN must be set as an environment variable (or in a .env file).
-
-Optional environment values:
-    CHANNEL=@coreviewz     channel users must join
-    REQUIRE_SUB=1          set 0 to disable the join requirement
-    MAX_UPLOAD_MB=50       raise to 2000 only if you run a local Bot API server
-"""
 import asyncio
 import html
 import json
